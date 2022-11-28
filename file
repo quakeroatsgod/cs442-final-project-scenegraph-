@@ -1,0 +1,2330 @@
+
+class Camera {
+
+    constructor() {
+        this.x = 0;
+        this.y = 0;
+        this.z = 0;
+        this.zoom=0.25
+
+        this.yaw = 0;
+        this.pitch = 0;
+        this.roll = 0;
+    }
+
+    // slightly less than a quarter turn up or down allowed
+    static get PITCH_LIMIT() { return .24; }
+
+    add_yaw( amount ) { 
+        this.yaw += amount; 
+
+        if( this.yaw < 0 ) {
+            this.yaw = 1 + this.yaw;
+        }
+
+        if( this.yaw > 1 ) {
+            this.yaw = this.yaw % 1;
+        }
+    }
+    
+    add_pitch( amount ) { 
+        this.pitch += amount; 
+        if( this.pitch > this.PITCH_LIMIT ) {
+            this.pitch = this.PITCH_LIMIT;
+        }
+        else if( this.pitch < - this.PITCH_LIMIT ) {
+            this.pitch = -this.PITCH_LIMIT;
+        }
+    }
+
+    add_roll( amount ) { 
+        this.roll += amount; 
+
+        if( this.roll < -.5 ) { this.roll = -.5; }
+        if( this.roll > 5 ) { this.roll = .5; }
+    }
+
+    move_in_direction( strafe, up, forward ) {
+        let matrix = Camera.get_dir_matrix( this.roll, this.pitch, this.yaw );
+        let txed = matrix.transform_vec( new Vec4( strafe, up, forward, 0 ) );
+
+        // console.log( txed.x, txed.y, txed.z, txed.w );
+
+        this.translate_vec( txed );
+        
+        // note: this is wrong:
+        // this.x += strafe;
+        // this.y += up;
+        // this.z += forward;
+    }
+
+    translate( x, y, z ) {
+        this.x += x;
+        this.y += y;
+        this.z += z;
+    }
+
+    translate_vec( v ) {
+        this.translate( v.x, v.y, v.z );
+    }
+
+    warp( x, y, z ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    warp_vec( v ) {
+        this.warp( v.x, v.y, v.z );
+    }
+
+    static get_dir_matrix( roll, pitch, yaw ) {
+        let matrix = new Mat4();
+
+        
+        matrix = matrix.mul( Mat4.rotation_xz( yaw ) );
+        matrix = matrix.mul( Mat4.rotation_yz( pitch ) );
+        matrix = matrix.mul( Mat4.rotation_xy( roll ) );
+        
+        return matrix;
+    }
+
+
+    get_view_matrix() {
+        let matrix = new Mat4();
+
+        matrix = matrix.mul( Mat4.translation( this.x, this.y, this.z ) );
+        
+        matrix = matrix.mul( Mat4.rotation_xz( this.yaw ) );
+        matrix = matrix.mul( Mat4.rotation_yz( this.pitch ) );
+        matrix = matrix.mul( Mat4.rotation_xy( this.roll ) );
+        
+        return matrix.inverse();
+    }
+}
+
+class Keys {
+    constructor() {
+        this.mouse_x=0.0;
+        this.mouse_y=0.0;
+        this.zoom=0.0
+        this.isTurning=false;
+        //list of boolean key values
+        this.keys_down={};    }
+
+    /**
+     * Register a keyboard listener and create a Keys object that 
+     * will be updated by it.
+     * 
+     * @returns Keys
+     */
+    static start_listening() {
+        let keys = new Keys();
+
+        addEventListener( 'keydown', function( ev ) {
+            // console.log( ev.code );
+            // use the keycode, not the text, to determine behavior.
+            // this prevents users in France from having to 
+            // hunt around the keyboard for W-A-S-D
+            if( typeof ev.code === 'string' ) {
+                keys.keys_down[ ev.code ] = true;
+            }
+        } );
+
+        addEventListener( 'keyup', function( ev ) {
+            if( typeof ev.code === 'string' ) {
+                keys.keys_down[ ev.code ] = false;
+            }
+        } );
+        //Rotate camera with mouse
+        addEventListener('mousedown',function(ev){
+            keys.isTurning=true;
+        });
+        addEventListener('mouseup',function(ev){
+            keys.isTurning=false;
+        })
+        addEventListener('mousemove',function(ev){
+            //If mouse is within canvas boundaries
+            if(ev.screenX <= 820 && ev.screenY <=925 && ev.screenY >=325){
+                if(keys.isTurning){
+                    keys.mouse_x=ev.movementX;
+                    keys.mouse_y=ev.movementY;
+                }
+            }
+            else{
+                keys.mouse_x=0;
+                keys.mouse_y=0;
+            }
+        });
+        addEventListener('wheel',function(ev){
+            keys.zoom=ev.deltaY/10000;
+        })
+        return keys;
+    }
+
+    is_key_down( code ) {
+        return !!this.keys_down[ code ];
+    }
+
+    is_key_up( code ) {
+        return !this.keys_down[ code ];
+    }
+
+    keys_down_list() {
+        return Object.entries(this.keys_down)
+            .filter( kv => kv[1] /* the value */ )
+            .map( kv => kv[0] /* the key */ );
+
+        // the code above is equivalent to this:
+        /*
+        let ret = [];
+
+        for( const [key, value] of Object.entries(this.keys_down) ) {
+            if( value ) {
+                ret.push( key );
+            }
+        }
+
+        return ret;
+        */
+
+        // notice how much more terse the functional is. It's easier to read, too, 
+        // if you're comfortable with functional programming.
+    }
+    getX(){
+        return this.mouse_x;
+    }
+    getY(){
+        return this.mouse_y;
+    }
+    getZoom(){
+        return this.zoom;
+    }
+}
+//Code attributed from learnopengl.com/cubemap
+//Class to create a cubemap, which is the skybox that surrounds the world.
+//It looks and feels similar to a mesh object
+const SKYBOX_VERTEX_STRIDE=12;
+class Cubemap{
+    /**
+     * 
+     * @param {*} gl 
+     * @param {*} shader_program 
+     * @param {String[]} tex 
+     * @param {*} vertices 
+     */
+    constructor(gl,program,tex, vertices){
+        this.verts = create_and_load_vertex_buffer( gl, vertices, gl.STATIC_DRAW );
+        this.n_verts = vertices.length;
+        this.program=program;
+        this.texture=[];
+        var image= new Array(6);
+        for(let i=0; i<6; i++){
+            //Texture stuff
+            let texture=gl.createTexture();
+            image[i] = new Image();
+            image[i].src=tex[i];
+            //Image asynchronous callback function upon loading image
+            image[i].onload=function(){
+                gl.bindTexture(gl.TEXTURE_CUBE_MAP,texture);
+                for(let x=0; x<6; x++){
+                    gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + x, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image[x]);            
+                    //Enable mipmapping
+                    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                }
+                gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+            }
+            this.texture=texture;
+        }
+        
+    }
+    static createCubemap(gl, program, tex){
+        let verts=[];
+        verts = [
+        -1000.0,  1000.0, -1000.0,
+        -1000.0, -1000.0, -1000.0,
+        1000.0, -1000.0, -1000.0,
+        1000.0, -1000.0, -1000.0,
+        1000.0,  1000.0, -1000.0,
+        -1000.0,  1000.0, -1000.0,
+
+        -1000.0, -1000.0,  1000.0,
+        -1000.0, -1000.0, -1000.0,
+        -1000.0,  1000.0, -1000.0,
+        -1000.0,  1000.0, -1000.0,
+        -1000.0,  1000.0,  1000.0,
+        -1000.0, -1000.0,  1000.0,
+
+        1000.0, -1000.0, -1000.0,
+        1000.0, -1000.0,  1000.0,
+        1000.0,  1000.0,  1000.0,
+        1000.0,  1000.0,  1000.0,
+        1000.0,  1000.0, -1000.0,
+        1000.0, -1000.0, -1000.0,
+
+        -1000.0, -1000.0,  1000.0,
+        -1000.0,  1000.0,  1000.0,
+        1000.0,  1000.0,  1000.0,
+        1000.0,  1000.0,  1000.0,
+        1000.0, -1000.0,  1000.0,
+        -1000.0, -1000.0,  1000.0,
+
+        -1000.0,  1000.0, -1000.0,
+        1000.0,  1000.0, -1000.0,
+        1000.0,  1000.0,  1000.0,
+        1000.0,  1000.0,  1000.0,
+        -1000.0,  1000.0,  1000.0,
+        -1000.0,  1000.0, -1000.0,
+
+        -1000.0, -1000.0, -1000.0,
+        -1000.0, -1000.0,  1000.0,
+        1000.0, -1000.0, -1000.0,
+        1000.0, -1000.0, -1000.0,
+        -1000.0, -1000.0,  1000.0,
+        1000.0, -1000.0,  1000.0
+        ];
+        
+        return new Cubemap(gl,program,tex,verts);
+    }
+    render(gl){
+        // console.log(this.program ===null)
+        gl.useProgram(this.program);
+        set_vertex_attrib_to_buffer( 
+            gl, this.program, 
+            "sky_coords", 
+            this.verts, 3, 
+            gl.FLOAT, false, SKYBOX_VERTEX_STRIDE, 0 
+        );
+        bind_texture_samplers( gl, this.program, "skybox" ,0);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER,this.verts);
+        gl.bindTexture(gl.TEXTURE_CUBE_MAP,this.texture);
+        gl.activeTexture( gl.TEXTURE0 );
+
+        
+
+        gl.drawArrays(gl.TRIANGLES, 0, 36);
+
+    }
+}
+
+/**
+ * XORs the gray-scale values along a square. Called in createBindXORTexture()
+ * @returns Uint8Array that contains the values of each pixel in a 256x256 texture
+ */
+function generateXORTexture(){
+    let data = new Array(256*256*4);
+    let width=256;
+    for( let row = 0; row < width; row++ ) {
+        for( let col = 0; col < width; col++ ) {
+            //Get pixel at some point
+            let pix = ( row * width + col ) * 4;
+            //The actual XOR'ing
+            data[pix] = data[pix + 1] = data[pix + 2] = row ^ col;
+            //Alpha set to max
+            data[pix + 3] = 255;
+        }
+    }
+    return new Uint8Array(data);
+}
+
+function createBindXORCubemap(gl){
+    let tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP,tex);
+    for(let x=0; x<6; x++){
+        gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + x,0,gl.RGBA,256,256,0,gl.RGBA,gl.UNSIGNED_BYTE,generateXORTexture());
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+    //Enable mipmapping
+    gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+    return tex;
+}
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Final Project: Scene Graphs</title>
+        <style>#the-canvas{border: 1px solid darkblue}</style>
+        <script src = "lib.js"></script>
+        <script src = "cubemap.js"></script>
+        <script src = "mat-vec-lib.js"></script>
+        <script src = "normal_mesh.js"></script>
+        <script src = "controls.js"></script>
+        <script src = "cam.js"></script>
+        <script src = "lit_material.js"></script>
+        <script src = "light.js"></script>
+        <script src = "scene.js"></script>
+        <script src = "main.js" defer></script>
+    </head>
+    <body>
+        <h1>Griffen Agnello<br> Final Project: Scene Graphs <br>CS 442</h1>
+        <table>
+            <tbody>
+                <td><canvas id="the-canvas" width="800" height="600"></canvas></td>
+                <td>Controls:<br>
+                    <strong>Hold R: ride the V A P O R W A V E  C O W</strong><br>
+                    <strong>F</strong>: Move camera to right side in front of car<br>
+                    <strong>G</strong>: Move camera to Left side behind car<br>
+                    <strong>W/S</strong>: Move Forward / Backward<br>
+                    <strong>A/D</strong> : Move Left / Right<br>
+                    <strong>Space/C</strong> : Move Up / Down<br>
+                    <strong>Q/E</strong> : Roll (Tilt Left / Right)<br>
+                    <strong>Left/Right arrow:</strong> Yaw (Rotate Left / Right)<br>
+                    <strong>Up/Down arrow:</strong> Pitch (Rotate Up / Down)<br>
+                    <strong>Mousewheel scroll:</strong> zoom in / out<br>
+                    Can also click and drag with mouse to rotate camera<br>
+                </td>
+            </tbody>   
+        </table>
+    </body>
+</html>
+
+/** 
+  * Creates a new vertex buffer and loads it full of the given data.
+  * Preserves bound buffer.
+  * 
+  * @param {WebGLRenderingContext} gl  
+  * @param {number[]} data
+  * @param {number} usage
+  * 
+  * @returns {WebGlBuffer}
+ */
+function create_and_load_vertex_buffer(gl, data, usage) {
+    let current_array_buf = gl.getParameter( gl.ARRAY_BUFFER_BINDING );
+
+    let buf_id = gl.createBuffer();
+    gl.bindBuffer( gl.ARRAY_BUFFER, buf_id );
+    gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(data), usage );
+    
+    gl.bindBuffer( gl.ARRAY_BUFFER, current_array_buf );
+
+    return buf_id;
+}
+
+/**
+ * 
+ * @param {WebGLRenderingContext} gl
+ * @param {WebGLShader} shader_id 
+ */
+function assert_shader_compiled_correctly( gl, shader_id ) {
+    if( !gl.getShaderParameter( shader_id, gl.COMPILE_STATUS ) ) {
+        let err = gl.getShaderInfoLog( shader_id );
+        let shader_kind = gl.getShaderParameter( shader_id, gl.SHADER_TYPE );
+        let shader_kind_name = 
+            shader_kind == gl.VERTEX_SHADER ? 'vertex shader' :
+            shader_kind == gl.FRAGMENT_SHADER ? 'fragment shader' :
+            'unknown shader'; 
+
+        throw new Error( 'Compile error in ' + shader_kind_name + ':\n' + err );
+    }
+
+    return true;
+}
+
+/**
+ * Creates a new shader program, creates and attaches vertex and fragment shaders 
+ * from the given sources, links the resulting program, and returns it. 
+ * 
+ * @param {WebGLRenderingContext} gl
+ * @param {string} v_shader_src 
+ * @param {string} f_shader_src 
+ * 
+ * @returns {WebGLProgram}
+ */
+function create_compile_and_link_program( gl, v_shader_src, f_shader_src ) {
+    let program = gl.createProgram()
+    
+    let v_shader = gl.createShader( gl.VERTEX_SHADER );
+    gl.shaderSource( v_shader, v_shader_src );
+    gl.compileShader( v_shader );
+    assert_shader_compiled_correctly( gl, v_shader );
+
+    let f_shader = gl.createShader( gl.FRAGMENT_SHADER );
+    gl.shaderSource( f_shader, f_shader_src );
+    gl.compileShader( f_shader );
+    assert_shader_compiled_correctly( gl, f_shader );
+
+    gl.attachShader( program, v_shader );
+    gl.attachShader( program, f_shader );
+    gl.linkProgram( program );
+
+    if( !gl.getProgramParameter( program, gl.LINK_STATUS ) ) {
+        let err = gl.getProgramInfoLog( program );
+        throw new Error( 'Link error in shader program:\n' + err );
+    }
+
+    return program;
+}
+
+/**
+ * 
+ * @param {WebGLRenderingContext} gl 
+ * @param {WebGLProgram} program 
+ */
+function delete_program_and_attached_shaders( gl, program ) {
+    let shaders = gl.getAttachedShaders( program );
+    gl.deleteProgram( program );
+
+    shaders.forEach( function( shader ) { gl.deleteShader( shader ); } );
+}
+
+/**
+ * Sets the buffer for a given vertex attribute name. 
+ * 
+ * @param {WebGLRenderingContext} gl 
+ * @param {WebGLProgram} program 
+ * @param {string} attrib_name 
+ * @param {WebGLBuffer} buffer
+ * @param {number} n_components 
+ * @param {number} gl_type 
+ * @param {number} stride 
+ * @param {number} offset
+ */
+function set_vertex_attrib_to_buffer( 
+    gl, program, attrib_name, buffer, n_components, gl_type, normalize, stride, offset ) 
+{
+    let attr_loc = gl.getAttribLocation( program, attrib_name );
+    
+    if ( attr_loc == - 1 ) { 
+        throw new Error( 'either no attribute named "' + attrib_name + 
+            '" in program or attribute name is reserved/built-in.' ) 
+    } 
+
+    let err = gl.getError()
+    if ( err != 0 ) {
+        throw new Error( 'invalid program. Error: ' + err );
+    }
+
+    let current_array_buf = gl.getParameter( gl.ARRAY_BUFFER_BINDING );
+
+    gl.bindBuffer( gl.ARRAY_BUFFER, buffer );
+    gl.enableVertexAttribArray( attr_loc );
+    gl.vertexAttribPointer( attr_loc, n_components, gl_type, normalize, stride, offset );
+    //gl.enableVertexAttribArray( attr_loc );
+
+    gl.bindBuffer( gl.ARRAY_BUFFER, current_array_buf );
+}
+
+/**
+ * Set global parameters such as "clear color". 
+ * @param {WebGLRenderingContext} gl 
+ */
+function set_render_params( gl ) {
+    // gl.clearColor( 0.0, 0.0, 0.0, 1 );
+    gl.clearColor( 0.5, 0.8, 1.0, 1.0 );
+
+    gl.enable( gl.DEPTH_TEST );
+    gl.enable( gl.BLEND );
+
+    gl.depthMask( true );
+    gl.depthFunc( gl.LEQUAL );
+
+    gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+
+    // gl.viewport( 0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight );
+}
+
+/**
+ * Sets uniform data for a row-major matrix4
+ * 
+ * @param {WebGLRenderingContext} gl 
+ * @param {WebGLProgram} program
+ * @param {string} name 
+ * @param {number[]} data 
+ */
+function set_uniform_matrix4( gl, program, name, data ) {
+    //let old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    //gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, name );
+    gl.uniformMatrix4fv( loc, true, data );
+
+    //gl.useProgram( old_prog );
+}
+
+ /** 
+  * Creates a new index buffer and loads it full of the given data.
+  * Preserves bound buffer.
+  * 
+  * @param {WebGLRenderingContext} gl  
+  * @param {number[]} data
+  * @param {number} usage
+  * 
+  * @returns {WebGlBuffer}
+ */
+function create_and_load_elements_buffer(gl, data, usage) {
+    let current_buf = gl.getParameter( gl.ELEMENT_ARRAY_BUFFER_BINDING );
+    
+    let buf_id = gl.createBuffer();
+    gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, buf_id );
+    gl.bufferData( gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(data), usage );
+
+    gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, current_buf );
+    
+    return buf_id;
+}
+
+
+/**
+ * Set the built-in shader uniform to texture unit <value>.
+ * (this isn't strictly necessary, but would if we wanted to use multi-texturing)
+ * @param {WebGLRenderingContext} gl 
+ */
+function bind_texture_samplers( gl, program, sampler_name, value ) {
+    const old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, sampler_name );
+    gl.uniform1i( loc, value );
+
+    gl.useProgram( old_prog );
+}
+
+/**
+ * Sets uniform data for a 3 component vector.
+ * @param {WebGLRenderingContext} gl 
+ * @param {WebGLProgram} program 
+ * @param {string} name 
+ */
+function set_uniform_vec3( gl, program, name, x, y, z ) {
+    // let old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    // gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, name );
+
+    gl.uniform3f( loc, x, y, z );
+
+    // gl.useProgram( old_prog );
+}
+
+/**
+ * Set a single float value
+ * @param {*} gl 
+ * @param {*} program 
+ * @param {*} name 
+ * @param {*} x 
+ */
+function set_uniform_scalar( gl, program, name, x ){
+    // let old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    // gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, name );
+    gl.uniform1f( loc, x );
+
+    // gl.useProgram( old_prog );
+}
+
+/**
+ * Sets uniform data for an array of 3 component vectors.
+ * @param {WebGLRenderingContext} gl 
+ * @param {WebGLProgram} program 
+ * @param {string} name 
+ * @param {number[]} data must be flattened
+ */
+function set_uniform_vec3_array( gl, program, name, data ) {
+    // let old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    // gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, name );
+
+    gl.uniform3fv( loc, data )
+
+    // gl.useProgram( old_prog );
+}
+
+function set_uniform_int( gl, program, name, data ) {
+    // let old_prog = gl.getParameter( gl.CURRENT_PROGRAM );
+    // gl.useProgram( program );
+
+    const loc = gl.getUniformLocation( program, name );
+
+    gl.uniform1i( loc, data );
+
+    // gl.useProgram( old_prog );
+}
+
+class Light {
+    /**
+     * Construct a light. 
+     * @param {number} x 
+     * @param {number} y 
+     * @param {number} z 
+     * @param {number} r 
+     * @param {number} g 
+     * @param {number} b 
+     * @param {number} light_no 
+     */
+    constructor( x, y, z, r, g, b, light_no ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+
+        this.r = r;
+        this.g = g;
+        this.b = b;
+
+        this.light_no = light_no;
+    }
+
+    /**
+     * 
+     * @param {WebGLRenderingContext} gl 
+     * @param {WebGLProgram} program
+     */
+    bind( gl, program, modelview ) {
+        if( this.light_no == 0 ) { // this is the sun
+            set_uniform_vec3( gl, program, 'sun_dir', this.x, this.y, this.z );
+            set_uniform_vec3( gl, program, 'sun_color', this.r, this.g, this.b );
+        }
+        else {
+            set_uniform_vec3( 
+                gl, program, 
+                'light' + this.light_no + '_loc', 
+                this.x, this.y, this.z 
+            );
+
+            set_uniform_vec3( 
+                gl, program, 
+                'light' + this.light_no + '_color', 
+                this.r, this.g, this.b 
+            );
+        }
+    }
+
+}
+class LitMaterial {
+
+/**
+ * Create a new material from the given texture and parameters
+ * @param {WebGLRenderingContext} gl 
+ * @param {HTMLImageElement} image 
+ * @param {*} blend_mode 
+ */
+constructor( gl, image_url, blend_mode, ambient, diffuse, specular, shininess ) {
+    this.tex = gl.createTexture();
+    this.blend_mode = blend_mode;
+    this.loaded = false;
+    
+    this.ambient = ambient;
+    this.diffuse = diffuse;
+    this.specular = specular;
+    this.shininess = shininess;
+
+
+    const old_tex_binding = gl.getParameter( gl.TEXTURE_BINDING_2D );
+    gl.bindTexture( gl.TEXTURE_2D, this.tex );
+
+    gl.texImage2D( 
+        gl.TEXTURE_2D, 0, gl.RGBA,
+        256, 256, 0, 
+        gl.RGBA, gl.UNSIGNED_BYTE,  
+        LitMaterial.xor_texture( 256 )
+    );
+    gl.generateMipmap( gl.TEXTURE_2D );
+
+    if( old_tex_binding === null ) {
+        gl.bindTexture( gl.TEXTURE_2D, old_tex_binding );
+    }
+
+    let image = new Image();
+    let _tex = this; // inside an anomymous function, 'this' refers to the function.
+                     // so we create an alias to the material we're creating.
+
+    // the image has to be loaded before we can load the pixel data
+    image.addEventListener( 'load', function() {
+
+        const old_tex_binding = gl.getParameter( gl.TEXTURE_BINDING_2D );
+        gl.bindTexture( gl.TEXTURE_2D, _tex.tex );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR );
+        //gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, blend_mode );
+        gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, blend_mode );
+        
+        gl.texImage2D(
+            gl.TEXTURE_2D, 0, gl.RGBA, 
+            gl.RGBA, gl.UNSIGNED_BYTE, image
+        );
+        
+        _tex.width = image.width;
+        _tex.height = image.height;
+
+        gl.generateMipmap( gl.TEXTURE_2D );
+
+        console.log( 'loaded texture: ', image.src );
+
+        // we might want to keep track of this later
+        _tex.loaded = true;
+
+        if( old_tex_binding === null ) {
+            gl.bindTexture( gl.TEXTURE_2D, old_tex_binding );
+        }
+    } );
+
+    image.src = image_url;
+}
+
+bind( gl, program ) {
+    gl.bindTexture( gl.TEXTURE_2D, this.tex );
+
+    set_uniform_scalar( gl, program, 'mat_ambient', this.ambient );
+    set_uniform_scalar( gl, program, 'mat_diffuse', this.diffuse );
+    set_uniform_scalar( gl, program, 'mat_specular', this.specular );
+    set_uniform_scalar( gl, program, 'mat_shininess', this.shininess );
+}
+
+/**
+ * Create the famous width * width XOR texture for testing.
+ * @param {number} width  
+ */
+static xor_texture( width ) {
+    let data = new Array( width * width * 4 );
+
+    for( let row = 0; row < width; row++ ) {
+        for( let col = 0; col < width; col++ ) {
+            let pix = ( row * width + col ) * 4;
+            data[pix] = data[pix + 1] = data[pix + 2] = row ^ col; // r, g, and b are the same
+            data[pix + 3] = 255; // alpha is always max (fully opaque)
+        }
+    }
+
+    return new Uint8Array( data );
+}
+}
+//Griffen Agnello   Final Project   Scene Graphs    CS442
+let canvas = document.getElementById( 'the-canvas' );
+/** @type {WebGLRenderingContext} */
+let gl = canvas.getContext( 'webgl2' );
+
+const PHONG_VERTEX_SHADER = 
+`   #version 300 es
+    precision mediump float;
+
+    uniform mat4 projection;
+    uniform mat4 model;
+    uniform mat4 view;
+
+    in vec3 coordinates;
+    in vec4 color;
+    in vec2 uv;
+    in vec3 normal;
+    out vec3 surf_normal;
+    out vec4 v_color;
+    out vec2 v_uv;
+    out vec3 v_coords;
+    void main( void ) {
+        gl_Position = projection * view * model * vec4( coordinates, 1.0 );
+        v_color = ( 0.1 * color ); 
+        v_coords=coordinates;
+        v_uv = uv;
+        surf_normal=normal;
+    }
+`;
+
+const PHONG_FRAGMENT_SHADER = 
+`   #version 300 es
+    precision mediump float;
+    uniform mat4 model;
+    uniform vec3 viewer_loc;
+    uniform vec3 sun_dir;
+    uniform vec3 sun_color;
+    uniform vec3 light1_loc;
+    uniform vec3 light1_color;
+    uniform vec3 light2_loc;
+    uniform vec3 light2_color;
+    const float light_attenuation_k = 0.01;
+    const float light_attenuation_l = 0.1;
+    const float light_attenuation_q = 0.00; /* no quadratic term for now */
+    uniform float mat_ambient;
+    uniform float mat_diffuse;
+    uniform float mat_specular;
+    uniform float mat_shininess;
+    in vec4 v_color;
+    in vec2 v_uv;
+    in vec3 surf_normal;
+    in vec3 v_coords;
+    out vec4 f_color;
+    uniform sampler2D tex_0;
+    vec3 diff_color( vec3 normal, vec3 light_dir,vec3 light_color, float mat_diffuse ) {
+        return mat_diffuse * light_color * max( dot( normal, light_dir ), 0.0 );
+    }
+
+    vec3 spec_color( 
+        vec3 normal, 
+        vec3 light_dir,
+        vec3 eye_dir, 
+        vec3 light_color, 
+        float mat_specular,
+        float mat_shiniess
+    ) {
+        float cos_light_surf_normal = dot( normal, light_dir );
+        if( cos_light_surf_normal <= 0.0 ) {
+            return vec3( 0.0, 0.0, 0.0 );
+        }
+        vec3 light_reflection = 
+            2.0 * cos_light_surf_normal * normal - light_dir;
+        return 
+            pow( 
+                max( dot( light_reflection, normalize( eye_dir ) ), 0.0  ),
+                mat_shininess 
+            ) * light_color * mat_specular;
+    }
+
+    float attenuation( vec3 vector_to_light ) {
+        float light1_dist = length( vector_to_light );
+        float light1_atten = 1.0 / ( 
+            light_attenuation_k + 
+            light_attenuation_l * light1_dist +
+            light_attenuation_q * light1_dist * light1_dist
+        );
+        return light1_atten;
+    }
+
+    void main( void ) {
+        vec3 normal_tx = normalize( mat3( model ) * surf_normal );
+        vec3 coords_tx = ( model * vec4( v_coords, 1.0 ) ).xyz;
+        vec3 eye_dir = normalize( viewer_loc - coords_tx );
+        vec4 ambient_color = vec4( mat_ambient, mat_ambient, mat_ambient, 1.0 );
+        float cos_sun_dir_surf_normal = dot( sun_dir, normal_tx );
+        vec3 sun_diffuse_color = diff_color( normal_tx, sun_dir, sun_color, mat_diffuse );
+        vec3 sun_spec_color =spec_color( normal_tx, sun_dir, eye_dir, sun_color, mat_specular, mat_shininess );
+        vec4 color_from_sun = vec4( sun_diffuse_color + sun_spec_color, 1.0 );
+        
+        vec3 vector_to_light1 = light1_loc - coords_tx;
+        vec3 light1_dir = normalize( vector_to_light1 );
+        float light1_atten = attenuation( vector_to_light1 );
+        vec3 light1_diffuse_color = diff_color( normal_tx, light1_dir, light1_color, mat_diffuse);
+        vec3 light1_spec_color = spec_color( normal_tx, light1_dir, eye_dir, light1_color, mat_specular, mat_shininess );
+        vec4 color_from_light1 = vec4(( light1_diffuse_color + light1_spec_color ) * light1_atten, 1.0 );
+
+        vec3 vector_to_light2 = light2_loc - coords_tx;
+        vec3 light2_dir = normalize( vector_to_light2 );
+        float light2_atten = attenuation( vector_to_light1 );
+        vec3 light2_diffuse_color = diff_color( normal_tx, light2_dir, light2_color, mat_diffuse);
+        vec3 light2_spec_color = spec_color( normal_tx, light2_dir, eye_dir, light2_color, mat_specular, mat_shininess );
+        vec4 color_from_light2 = vec4(( light2_diffuse_color + light2_spec_color ) * light2_atten, 1.0 );
+
+        f_color = v_color + ( 1.0 * (
+            ambient_color +
+            color_from_sun +
+            color_from_light1 +
+            color_from_light2
+        ) ) * texture( tex_0, v_uv ); 
+    }
+`;
+//Attributed from learnopengl.com/cubemap
+const SKYBOX_SHADER_VERTEX=
+`#version 300 es
+precision mediump float;
+uniform mat4 projection;
+uniform mat4 modelview;
+uniform mat4 view;
+in vec3 sky_coords;
+out vec3 skybox_coords;
+void main(){    
+    skybox_coords=sky_coords;
+    //remove translation from view matrix so that the viewbox is always fixiated on the camera's position
+    mat4 view_no_trans = mat4(mat3(view));
+    gl_Position = projection * view_no_trans * vec4( sky_coords, 1.0 );
+
+}
+`;
+const SKYBOX_SHADER_FRAGMENT=
+`#version 300 es
+precision mediump float;
+out vec4 FragColor;
+in vec3 skybox_coords;
+uniform samplerCube skybox;
+void main(){    
+    FragColor = texture(skybox, skybox_coords);
+}
+
+`;
+let lit_program = create_compile_and_link_program(gl, PHONG_VERTEX_SHADER,PHONG_FRAGMENT_SHADER);
+let skybox_program = create_compile_and_link_program(gl, SKYBOX_SHADER_VERTEX, SKYBOX_SHADER_FRAGMENT);
+gl.useProgram( lit_program );
+set_render_params( gl );
+
+let last_update = performance.now();
+
+const DESIRED_TICK_RATE = 60;
+const DESIRED_MSPT = 1000.0 / DESIRED_TICK_RATE;
+
+const ROTATION_SPEED = 0.2; // eighth turn per second
+const ROTATION_SPEED_PER_FRAME = ROTATION_SPEED / DESIRED_TICK_RATE;
+
+const FLY_SPEED = 5;    // units per second
+const FLY_SPEED_PER_FRAME = FLY_SPEED / DESIRED_TICK_RATE;
+//Amount to change the scale of the floating box by
+var SCALE_CHANGE_AMOUNT=1;
+var SCALE_CHANGE_INCREMENT=0.025;
+//Timer for moving the road meshes
+const TIMER_START_TIME=6000;
+var time_since_last_move=TIMER_START_TIME;
+let keys = Keys.start_listening();
+
+let cam = new Camera();
+cam.translate( 0, 2, 0 );
+cam.yaw=-.25;
+var loaded_cow=false
+//Cubemap skybox, names stand for positive/negative x/y/z, must iterate in this exact order
+let skybox_imgs=[   'res/skybox/px.png','res/skybox/nx.png','res/skybox/py.png',
+                    'res/skybox/ny.png','res/skybox/pz.png','res/skybox/nz.png']
+
+let skybox=Cubemap.createCubemap(gl,skybox_program,skybox_imgs);
+
+var scene = new Scene();
+//Sun settings
+scene.set_sun_color(0.95,0,0.25);
+scene.set_sun_direction(-2,2,-1);
+//Scene Lighting
+let light_1 = new NodeLight(0,1,0,false);
+let light_2 = new NodeLight(0,0,1, false);
+//Scene Meshes
+let floating_box_mat = new LitMaterial( gl, 'res/textures/wood_boards.png', gl.LINEAR, 0.125, 1, 2, 4 );
+let car_mat = new LitMaterial( gl, 'res/textures/car.jpg', gl.LINEAR, 0.125, 1, 2, 4 );
+let wheel_mat = new LitMaterial( gl, 'res/textures/wheel.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
+let cow_mat = new LitMaterial( gl, 'res/textures/vaporwave.png', gl.LINEAR, 0.125, 1, 2, 8 );
+let road_mat = new LitMaterial( gl, 'res/textures/road.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
+// let height_map=[    [0,0,0,0,0,0],
+//                     [0,1,1,1,1,0],
+//                     [0,1,1,1,1,0],
+//                     [0,1,1,1,1,0],
+//                     [0,1,1,1,1,0],
+//                     [0,-1,-1,-1,-1,0],
+//                     [0,0,0,0,0,0],
+//                     [0,0,0,0,0,0],
+//                     [0,0,0,0,0,0]];
+// let mesh_map = NormalMesh.from_heightmap(gl,lit_program,height_map,-1,3,scale_mat);
+//Asynchronously load the cow obj
+var cow_mesh=null;
+NormalMesh.from_obj_file(gl,'res/obj/cow.obj', lit_program, getMesh,cow_mat,false)
+let mesh_box_car = NormalMesh.box(gl, lit_program, 1,1,1,car_mat);
+let mesh_box_floating = NormalMesh.box(gl, lit_program, 1,1,1,floating_box_mat);
+let wheel_sphere = NormalMesh.uv_sphere( gl, lit_program, 0.25, 200, wheel_mat ); 
+let mesh_road = NormalMesh.platform(gl,lit_program,1,4,0,1,road_mat);
+
+//add stuff to scene
+var root_control_node = scene.create_node(0,0,0, 0,0,0, 1,1,1, null);
+var road_control_node = root_control_node.create_child_node(0,-1,0, 0,0,0, 3,1,3, null);
+var car_control_node = root_control_node.create_child_node(0,0,0, -0.32,0,0, 2,1,2, null);
+var wheel_control_node = car_control_node.create_child_node(0,0,0, 0,0,0, 1,1,1, null);
+var floating_box_control_node=car_control_node.create_child_node(0,0,0, 0,0,0, 0.5,1,0.5, null);
+
+var floating_box=floating_box_control_node.create_child_node(0,-2,0, 0,0,0, 1,1,1, mesh_box_floating);
+//This will be set as a node later after loading obj
+var cow_node = null;
+var car_body = car_control_node.create_child_node(0,0,0, 0,0,0, 1,1,1, mesh_box_car);
+var light_nodes=[   car_control_node.create_child_node(0,0,0, 0,0,0, 1,1,1, light_1),  
+                    floating_box.create_child_node(0,0,0, 0,0,0, 1,1,1, light_2)
+]               
+var wheels=[    wheel_control_node.create_child_node(-0.5,-0.75,-0.5, 0,0,0, 1,1,1, wheel_sphere),
+                wheel_control_node.create_child_node(0.5,-0.75,-0.5, 0,0,0, 1,1,1, wheel_sphere),
+                wheel_control_node.create_child_node(-0.5,-0.75,0.5, 0,0,0, 1,1,1, wheel_sphere),
+                wheel_control_node.create_child_node(0.5,-0.75,0.5, 0,0,0, 1,1,1, wheel_sphere)
+]
+//3 meshes to make 1 long road
+var road1=road_control_node.create_child_node(0,0,0, -0.32,0,0, 1,1,1, mesh_road);
+var road2=road1.create_child_node(0,0,4, 0,0,0, 1,1,1, mesh_road);
+var road3=road2.create_child_node(0,0,4, 0,0,0, 1,1,1, mesh_road);
+
+
+function render( now ) {
+    last_update = now;
+    
+    requestAnimationFrame( render );
+    
+    //Preliminary initialization that is the same throughout the mesh rendering
+    //Use phong lighting shader to load most of everything    
+    gl.useProgram(lit_program);
+    gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+    
+    let jobs = [];
+    let lights = [];
+    scene.generate_render_batch(jobs, lights);
+    let model = Mat4.identity();
+    let view = cam.get_view_matrix();
+    let projection = Mat4.perspective_x( cam.zoom, 4 / 3, 0.125, 2048 );
+    set_uniform_matrix4( gl, lit_program, 'projection', projection.data );
+    set_uniform_matrix4( gl, lit_program, 'view', view.data );
+    // transform viewer coordinates
+    set_uniform_vec3( gl, lit_program, 'viewer_loc', cam.x, cam.y, cam.z );
+    if(cow_mesh){
+        //Add cow to scene graph when it's done loading. The cow loading should not bog down rendering everything else
+        if(!loaded_cow){
+            cow_node = car_control_node.create_child_node(0,0.85,0, 0,0,0, 0.1,0.1,0.1, cow_mesh)
+            cow_node.add_yaw(-0.25)
+            loaded_cow=true;
+        }
+        // bind lights
+        scene.bind_sun(gl,lit_program);
+        //Render every node in scene graph and multiply each node's matrix by the model matrix
+        for(let job of jobs){
+            model=job.matrix;
+            //Change model depending on what we want to draw
+            set_uniform_matrix4( gl, lit_program, 'model', model.data );
+            
+            job.mesh.render(gl);
+        }
+        //Create light object and bind it
+        let light_count=1;
+        for(let light of lights){
+            let light_binder = new Light(light.loc.x, light.loc.y, light.loc.z,
+                                        light.color.r, light.color.g, light.color.b, light_count++);
+            light_binder.bind(gl,lit_program,null);
+        }
+    }
+    //Render skybox with skybox shader
+    gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
+    gl.useProgram(skybox_program);
+    set_uniform_matrix4( gl, skybox_program, 'projection', projection.data );
+    set_uniform_matrix4( gl, skybox_program, 'model', model.data );
+    set_uniform_matrix4( gl, skybox_program, 'view', view.data );
+    skybox.render(gl);
+    gl.depthFunc(gl.LESS); // set depth function back to default
+
+}
+
+const KEYMAP = {
+    'KeyF': function() { 
+        cam.x=car_control_node.x-4;
+        cam.y=car_control_node.y+2;
+        cam.z=car_control_node.z;
+        cam.yaw=0.27;
+        cam.pitch=-0.05
+
+    },
+    'KeyG': function() {
+        cam.x=car_control_node.x+4;
+        cam.y=car_control_node.y;
+        cam.z=car_control_node.z;
+        cam.yaw=0.75
+        cam.pitch=0.05
+    },
+    'KeyR': function() {
+        cam.x=car_control_node.x;
+        cam.y=car_control_node.y+1.25;
+        cam.z=car_control_node.z;
+    },
+    'KeyW': function() { cam.move_in_direction( 0, 0, FLY_SPEED_PER_FRAME ); },
+    'KeyS': function() { cam.move_in_direction( 0, 0, -FLY_SPEED_PER_FRAME ); },
+    'KeyA': function() { cam.move_in_direction( -FLY_SPEED_PER_FRAME, 0, 0 ); },
+    'KeyD': function() { cam.move_in_direction( FLY_SPEED_PER_FRAME, 0, 0 ); },
+    'Space': function() { cam.translate( 0, FLY_SPEED_PER_FRAME, 0 ); },
+    'KeyC': function() { cam.translate( 0, -FLY_SPEED_PER_FRAME, 0 ); },
+    'KeyQ': function() { cam.add_roll( -ROTATION_SPEED_PER_FRAME ); },
+    'KeyE': function() { cam.add_roll( ROTATION_SPEED_PER_FRAME ); },
+    'ArrowLeft': function() { cam.add_yaw( -ROTATION_SPEED_PER_FRAME ); },
+    'ArrowRight': function() { cam.add_yaw( ROTATION_SPEED_PER_FRAME ); },
+    'ArrowUp': function() { cam.add_pitch( -ROTATION_SPEED_PER_FRAME ); },
+    'ArrowDown': function() { cam.add_pitch( ROTATION_SPEED_PER_FRAME ); },
+};
+
+/**
+ * Retrieves a mesh from a file
+ * @param {*} mesh_from_file 
+ */
+function getMesh(mesh_from_file){
+    cow_mesh=mesh_from_file;
+}
+
+function update() {
+    let keys_down = keys.keys_down_list();
+    for( const key of keys_down ) {
+        let bound_function = KEYMAP[ key ];
+
+        if( bound_function ) {
+            bound_function();
+        }
+    }
+    cam.zoom+=keys.getZoom();
+    if(cam.zoom >= 0.4)                      cam.zoom=0.4;
+    else if(cam.zoom <= 0.0625)                cam.zoom=0.0625;
+    cam.yaw+=keys.getX() * ROTATION_SPEED_PER_FRAME*0.15;
+    cam.pitch+=keys.getY() * ROTATION_SPEED_PER_FRAME*0.15;
+
+    keys.mouse_x=0;
+    keys.mouse_y=0;
+    keys.zoom=0;
+    car_control_node.move_in_direction(0,0,8*ROTATION_SPEED_PER_FRAME);
+    floating_box_control_node.add_pitch(0.002)
+    floating_box_control_node.add_roll(0.002)
+    floating_box_control_node.add_yaw(0.002)
+    floating_box.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
+    cow_node.add_yaw(0.01)
+    for(wheel of wheels){
+        wheel.add_pitch(-0.02)
+    }
+    light_nodes[0].add_roll(0.02)
+
+    //update amount to scale by
+    if(SCALE_CHANGE_AMOUNT > 1.5 || SCALE_CHANGE_AMOUNT < 0.1){
+        //Flip sign so decrease/increase in scale
+        SCALE_CHANGE_INCREMENT*=(-1);
+    }
+    //Increment by 0.1 each update
+    SCALE_CHANGE_AMOUNT+=SCALE_CHANGE_INCREMENT;
+
+    //Decrement timer to move roads.
+    if(time_since_last_move < 0 ){
+        road1.move_in_direction(0,0,4)
+        time_since_last_move=TIMER_START_TIME;
+    }
+    else{
+        //Subtract passed time since last frame in milliseconds
+        let delta=((performance.now() - last_update)); 
+        time_since_last_move-=delta;
+    }
+    
+    return;
+}
+
+requestAnimationFrame( render );
+setInterval( update, DESIRED_MSPT );
+//Griffen Agenllo   CS442   Library Classes/methods
+class Vec3 {
+    constructor( x, y, z ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    /**
+     * Returns the vector that is this vector scaled by the given scalar.
+     * @param {number} by the scalar to scale with 
+     * @returns {Vec3}
+     */
+    scaled( by ) {
+        return new Vec3(this.x*by,this.y*by,this.z*by);
+    }
+
+    /**
+     * Returns the dot product between this vector and other
+     * @param {Vec3} other the other vector 
+     * @returns {number}
+     */
+    dot( other ) {
+        return ( (this.x * other.x) + (this.y * other.y) + (this.z * other.z) )
+    }
+
+    /**
+     * Returns the length of this vector using pythagorean theorem
+     * @returns {number}
+     */
+    length() {
+        return Math.sqrt(Math.pow(this.x,2)+Math.pow(this.y,2)+Math.pow(this.z,2))
+    }
+
+    /**
+     * Returns a normalized version of this vector by dividing direction by magnitude
+     * @returns {Vec3}
+     */
+    norm() {
+        let length=this.length()
+        if(length==0) return new Vec3(this.x,this.y,this.z);
+        return new Vec3(this.x/length,this.y/length,this.z/length);
+    }
+
+    /**
+     * Returns the vector sum between this and other.
+     * @param {Vec3} other 
+     */
+    add( other ) {
+        this.x += other.x;
+        this.y += other.y;
+        this.z += other.z;
+        return this;
+    }
+
+    sub( other ) {
+        return this.add( other.scaled( -1 ) );
+    }
+
+    /**
+     * Adds two vectors together, but does not change the value of either vector
+     * @param {Vec3} other 
+     * @returns Vec3
+     */
+    addImmutable(other){
+        return new Vec4(this.x + other.x, this.y + other.y, this.z + other.z)
+    }
+
+    /**
+     * Subtracts two vectors, but does not change the value of either vector
+     * @param {Vec3} other 
+     * @returns Vec3
+     */
+    subImmutable(other){
+        return this.addImmutable( other.scaled( -1 ) );
+    }
+    cross( other ) {
+        let x = this.y * other.z - this.z * other.y;
+        let y = this.x * other.z - this.z * other.x;
+        let z = this.x * other.y - this.y * other.x;
+
+        return new Vec3( x, y, z);
+    }
+
+    negate(){
+        return new Vec3(-this.x,-this.y,-this.z)
+    }
+	
+	toString() {
+		return [ '[', this.x, this.y, this.z, ']' ].join( ' ' );
+	}
+}
+
+class Vec4 {
+
+    constructor( x, y, z, w ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.w = w ?? 0;
+    }
+
+    /**
+     * Returns the vector that is this vector scaled by the given scalar.
+     * @param {number} by the scalar to scale with 
+     * @returns {Vec4}
+     */
+    scaled( by ) {
+        return new Vec4(this.x*by,this.y*by,this.z*by,this.w*by);
+    }
+
+    /**
+     * Returns the dot product between this vector and other
+     * @param {Vec4} other the other vector 
+     * @returns {number}
+     */
+    dot( other ) {
+        return ( (this.x * other.x) + (this.y * other.y) + (this.z * other.z) + (this.w * other.w) )
+    }
+
+    /**
+     * Returns the length of this vector using pythagorean theorem
+     * @returns {number}
+     */
+    length() {
+        return Math.sqrt(Math.pow(this.x,2)+Math.pow(this.y,2)+Math.pow(this.z,2)+Math.pow(this.w,2))
+    }
+
+    /**
+     * Returns a normalized version of this vector by dividing direction by magnitude
+     * @returns {Vec4}
+     */
+    norm() {
+        let length=this.length()
+        if(length==0) return new Vec4(this.x,this.y,this.z,this.w);
+        return new Vec4(this.x/length,this.y/length,this.z/length,this.w/length);
+    }
+
+    /**
+     * Returns the vector sum between this and other.
+     * @param {Vec4} other 
+     */
+    add( other ) {
+        this.x += other.x;
+        this.y += other.y;
+        this.z += other.z;
+        this.w += other.w;
+        return this;
+    }
+
+    sub( other ) {
+        return this.add( other.scaled( -1 ) );
+    }
+
+    /**
+     * Adds two vectors together, but does not change the value of either vector
+     * @param {Vec4} other 
+     * @returns Vec4
+     */
+    addImmutable(other){
+        return new Vec4(this.x + other.x, this.y + other.y, this.z + other.z,this.w + other.w)
+    }
+
+    /**
+     * Subtracts two vectors, but does not change the value of either vector
+     * @param {Vec4} other 
+     * @returns Vec4
+     */
+    subImmutable(other){
+        return this.addImmutable( other.scaled( -1 ) );
+    }
+
+    cross( other ) {
+        let x = this.y * other.z - this.z * other.y;
+        let y = this.x * other.z - this.z * other.x;
+        let z = this.x * other.y - this.y * other.x;
+
+        return new Vec4( x, y, z, 0 );
+    }
+
+    negate(){
+        return new Vec4(-this.x,-this.y,-this.z,-this.w)
+    }
+	
+	toString() {
+		return [ '[', this.x, this.y, this.z, this.w, ']' ].join( ' ' );
+	}
+    /**
+     * Calculate the normal of the given triangle. 
+     * For the resulting normal to point in the positive y direction, p0 to p1 should be to the 
+     * left of p0 to p2
+     * @param {Vec4} p0 
+     * @param {Vec4} p1 
+     * @param {Vec4} p2 
+     * @returns Vec4
+     */
+    static normal_of_triangle( p0, p1, p2 ) {
+        let v0 = p1.sub( p0 );
+        let v1 = p2.sub( p0 );
+        return v0.cross( v1 );
+    }
+}
+
+/**
+ * Matrix with row-major layout:
+ *  0       1       2       3
+ *  4       5       6       7
+ *  8       9       10      11
+ *  12      13      14      15
+ */
+class Mat4 {
+
+    constructor( data ) {
+        if( data == null ) {
+            this.data = [
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1,
+            ]
+        }
+        else {
+            this.data = data;
+        }
+    }
+
+    static identity() {
+        return new Mat4();
+    }
+
+    //Matrix corrected for perspective in the x field of view (FOV)
+    /**
+     * 
+     * @param {number} fov_y_tau fov in tau. .25 tau = 45 degrees
+     * @param {number} aspect_ratio fraction like 16/9 or 9/16
+     * @param {number} near distance to near end of fov
+     * @param {number} far distance to far end of fov
+     * @returns frustum perspective fov for Y
+     */
+    static perspective_y(fov_y_tau,aspect_ratio,near,far){
+        let fov=Mat4.turnToRad(fov_y_tau);
+        let top= (Math.tan(fov/2) * near);
+        let bottom = (-1) * top;
+        let right= top * aspect_ratio;
+        let left = (-1) * right;
+        return this.frustum(left, right, top, bottom, near, far);
+    }
+    //Matrix corrected for perspective in the x field of view (FOV)
+    /**
+     * 
+     * @param {number} fov_y_tau fov in tau. .25 tau = 45 degrees
+     * @param {number} aspect_ratio fraction like 16/9 or 9/16
+     * @param {number} near distance to near end of fov
+     * @param {number} far distance to far end of fov
+     * @returns frustum perspective fov for Y
+     */
+    static perspective_x(fov_x_tau,aspect_ratio,near,far){
+        let fov=Mat4.turnToRad(fov_x_tau);
+        let right= (Math.tan(fov/2) * near);
+        let top= right * (1 / aspect_ratio);
+        let bottom = (-1) * top;
+        let left = (-1) * right;
+        return this.frustum(left, right, top, bottom, near, far);
+    }
+    /**
+     * 
+     * @param {number} left 
+     * @param {number} right 
+     * @param {number} top 
+     * @param {number} bottom 
+     * @param {number} near 
+     * @param {number} far 
+     * @returns Mat4 frustum perspective matrix
+     */
+    static frustum(left, right, top, bottom, near, far){
+        let scale_x = (2 * near) / (right-left);
+        let scale_y = (2 * near) / (top-bottom);
+        let tx= (right+left) / (right-left);
+        let ty= (top + bottom) / (top-bottom);
+        //Coefficient for non-linear z mapping
+        let c1= (2*far*near) / (far-near);
+        let c2= (far+near) / (far-near);
+        return new Mat4([scale_x, 0, tx, 0,
+                        0, scale_y, ty, 0,
+                        0, 0, c2, (-1)*c1,
+                        0, 0, 1, 0])
+    }
+    toString() {
+        var str_vals = this.data.map( function( val ) { return "" + val } )
+        var str = 
+            str_vals.slice( 0, 4 ).join(' ') + '; ' + 
+            str_vals.slice( 4, 8 ).join(' ') + '; ' +
+            str_vals.slice( 8, 12 ).join(' ') + '; ' +
+            str_vals.slice( 12, 16 ).join(' ');
+
+        return '[' + str + ']';
+    }
+    /**
+     * Returns the radian equivalent of the turn parameter
+     * @param {number} turns
+     * @returns {number} radian
+     */
+    static turnToRad(turns){
+        return (turns * 2 * Math.PI)
+    }
+    /**
+     * Returns a rotation matrix in the XY plane, rotating by the given number of turns. 
+     * @param {number} turns amount to rotate by
+     * @returns {Mat4}  
+     */
+    static rotation_xy( turns ) {
+        let rad=this.turnToRad(turns);
+        return new Mat4([Math.cos(rad), Math.sin(rad), 0, 0,
+                        (-1)*(Math.sin(rad)), Math.cos(rad), 0, 0,
+                        0, 0, 1, 0,
+                        0, 0, 0, 1]);
+    }
+
+    /**
+     * Returns a rotation matrix in the XZ plane, rotating by the given number of turns
+     * @param {number} turns amount to rotate by
+     * @returns {Mat4}  
+     */
+    static rotation_xz( turns ) {
+        let rad=this.turnToRad(turns);
+        return new Mat4([Math.cos(rad), 0, Math.sin(rad), 0,
+                        0, 1, 0, 0,
+                        (-1)*(Math.sin(rad)), 0, Math.cos(rad), 0,
+                        0, 0, 0, 1]);
+        // return the rotation matrix
+    }
+
+    /**
+     * Returns a rotation matrix in the YZ plane, rotating by the given number of turns
+     * @param {number} turns amount to rotate by
+     * @returns {Mat4}  
+     */
+    static rotation_yz( turns ) {
+        let rad=this.turnToRad(turns);
+        return new Mat4([1, 0, 0, 0,
+                        0, Math.cos(rad), Math.sin(rad), 0,
+                        0, (-1)*(Math.sin(rad)), Math.cos(rad), 0,
+                        0, 0, 0, 1  ]);
+    }
+    /**
+     * Translates the matrix in some direction defined by d
+     * @param {number} dx 
+     * @param {number} dy 
+     * @param {number} dz 
+     */
+    static translation( dx, dy, dz ) {
+        return new Mat4([1, 0, 0, dx,
+                        0, 1, 0, dy,
+                        0, 0, 1, dz,
+                        0, 0, 0, 1])
+    }
+    /**
+     * 
+     * @param sx 
+     * @param sy 
+     * @param sz 
+     * @returns Matrix to scale by
+     */
+    static scale( sx, sy, sz ) {
+        return new Mat4([sx, 0, 0, 0,
+                        0, sy, 0, 0,
+                        0, 0, sz, 0,
+                        0, 0, 0, 1])
+    }
+    /**
+     * 
+     * @param right 
+     * @returns Matrix multiplied by right parameter matrix
+     */
+    mul( right ) {
+        let mat = new Mat4();
+        for(let y=0; y<15; y+=4){
+            for(let x=0; x<4; x++){
+                let column_sum=0;
+                for(let right_x=0; right_x<4; right_x++){
+                    column_sum+=(this.data[y+right_x] * right.data[right_x*4+x]);
+                }
+                mat.data[y+x]=column_sum;
+            }
+        }
+        return mat
+    }
+
+	// right multiply by column vector
+    transform( x, y, z, w ) {
+        this.transform_vec( new Vec4( x, y, z, w ) );
+    }
+    /**
+     * 
+     * @param {Vec4} vec 
+     * @returns Vec4 
+     */
+    transform_vec( vec ) {
+        let vec_new = [0, 0, 0, 0];
+        let vec_array= [vec.x,vec.y,vec.z,vec.w]
+        let row_num=0
+        for(let y=0; y<15; y+=4){
+            let row_sum=0;
+            for(let x=0; x<4; x++){
+                row_sum+=(this.data[y+x] * vec_array[x])
+            }
+            vec_new[row_num]=row_sum;
+            row_num++;
+        }
+        return new Vec4(vec_new[0],vec_new[1],vec_new[2],vec_new[3]);
+    }
+
+
+    rc( row, col ) {
+        return this.data[ row * 4 + col ]
+    }
+
+    // inverting a 4x4 matrix is ugly, there are 16 determinants we 
+    // need to calculate. Because it's such a pain, I looked it up:
+    // https://stackoverflow.com/questions/1148309/inverting-a-4x4-matrix
+    // author: willnode
+    inverse() {
+        // var A2323 = m.m22 * m.m33 - m.m23 * m.m32 ;
+        const A2323 = this.rc(2, 2) * this.rc(3, 3) - this.rc(2, 3) * this.rc(3, 2); 
+        // var A1323 = m.m21 * m.m33 - m.m23 * m.m31 ;
+        const A1323 = this.rc(2, 1) * this.rc(3, 3) - this.rc(2, 3) * this.rc(3, 1);
+        // var A1223 = m.m21 * m.m32 - m.m22 * m.m31 ;
+        const A1223 = this.rc(2, 1) * this.rc(3, 2) - this.rc(2, 2) * this.rc(3, 1);
+        // var A0323 = m.m20 * m.m33 - m.m23 * m.m30 ;
+        const A0323 = this.rc(2, 0) * this.rc(3, 3) - this.rc(2, 3) * this.rc(3, 0);
+        // var A0223 = m.m20 * m.m32 - m.m22 * m.m30 ;
+        const A0223 = this.rc(2, 0) * this.rc(3, 2) - this.rc(2, 2) * this.rc(3, 0);
+        // var A0123 = m.m20 * m.m31 - m.m21 * m.m30 ;
+        const A0123 = this.rc(2, 0) * this.rc(3, 1) - this.rc(2, 1) * this.rc(3, 0);
+        // var A2313 = m.m12 * m.m33 - m.m13 * m.m32 ;
+        const A2313 = this.rc(1, 2) * this.rc(3, 3) - this.rc(1, 3) * this.rc(3, 2);
+        // var A1313 = m.m11 * m.m33 - m.m13 * m.m31 ;
+        const A1313 = this.rc(1, 1) * this.rc(3, 3) - this.rc(1, 3) * this.rc(3, 1);
+        // var A1213 = m.m11 * m.m32 - m.m12 * m.m31 ;
+        const A1213 = this.rc(1, 1) * this.rc(3, 2) - this.rc(1, 2) * this.rc(3, 1);
+        // var A2312 = m.m12 * m.m23 - m.m13 * m.m22 ;
+        const A2312 = this.rc(1, 2) * this.rc(2, 3) - this.rc(1, 3) * this.rc(2, 2);
+        // var A1312 = m.m11 * m.m23 - m.m13 * m.m21 ;
+        const A1312 = this.rc(1, 1) * this.rc(2, 3) - this.rc(1, 3) * this.rc(2, 1);
+        // var A1212 = m.m11 * m.m22 - m.m12 * m.m21 ;
+        const A1212 = this.rc(1, 1) * this.rc(2, 2) - this.rc(1, 2) * this.rc(2, 1);
+        // var A0313 = m.m10 * m.m33 - m.m13 * m.m30 ;
+        const A0313 = this.rc(1, 0) * this.rc(3, 3) - this.rc(1, 3) * this.rc(3, 0);
+        // var A0213 = m.m10 * m.m32 - m.m12 * m.m30 ;
+        const A0213 = this.rc(1, 0) * this.rc(3, 2) - this.rc(1, 2) * this.rc(3, 0);
+        // var A0312 = m.m10 * m.m23 - m.m13 * m.m20 ;
+        const A0312 = this.rc(1, 0) * this.rc(2, 3) - this.rc(1, 3) * this.rc(2, 0);
+        // var A0212 = m.m10 * m.m22 - m.m12 * m.m20 ;
+        const A0212 = this.rc(1, 0) * this.rc(2, 2) - this.rc(1, 2) * this.rc(2, 0);
+        // var A0113 = m.m10 * m.m31 - m.m11 * m.m30 ;
+        const A0113 = this.rc(1, 0) * this.rc(3, 1) - this.rc(1, 1) * this.rc(3, 0);
+        // var A0112 = m.m10 * m.m21 - m.m11 * m.m20 ;
+        const A0112 = this.rc(1, 0) * this.rc(2, 1) - this.rc(1, 1) * this.rc(2, 0);
+        const det = 
+        this.rc(0, 0) * ( this.rc(1, 1) * A2323 - this.rc(1, 2) * A1323 + this.rc(1, 3) * A1223 ) -
+        this.rc(0, 1) * ( this.rc(1, 0) * A2323 - this.rc(1, 2) * A0323 + this.rc(1, 3) * A0223 ) +
+        this.rc(0, 2) * ( this.rc(1, 0) * A1323 - this.rc(1, 1) * A0323 + this.rc(1, 3) * A0123 ) -
+        this.rc(0, 3) * ( this.rc(1, 0) * A1223 - this.rc(1, 1) * A0223 + this.rc(1, 2) * A0123 );
+        const dr = 1.0 / det;
+        return new Mat4( [
+            dr * ( this.rc(1, 1) * A2323 - this.rc(1, 2) * A1323 + this.rc(1, 3) * A1223 ),
+            dr *-( this.rc(0, 1) * A2323 - this.rc(0, 2) * A1323 + this.rc(0, 3) * A1223 ),
+            dr * ( this.rc(0, 1) * A2313 - this.rc(0, 2) * A1313 + this.rc(0, 3) * A1213 ),
+            dr *-( this.rc(0, 1) * A2312 - this.rc(0, 2) * A1312 + this.rc(0, 3) * A1212 ),
+
+            dr *-( this.rc(1, 0) * A2323 - this.rc(1, 2) * A0323 + this.rc(1, 3) * A0223 ),
+            dr * ( this.rc(0, 0) * A2323 - this.rc(0, 2) * A0323 + this.rc(0, 3) * A0223 ),
+            dr *-( this.rc(0, 0) * A2313 - this.rc(0, 2) * A0313 + this.rc(0, 3) * A0213 ),
+            dr * ( this.rc(0, 0) * A2312 - this.rc(0, 2) * A0312 + this.rc(0, 3) * A0212 ),
+
+            dr * ( this.rc(1, 0) * A1323 - this.rc(1, 1) * A0323 + this.rc(1, 3) * A0123 ),
+            dr *-( this.rc(0, 0) * A1323 - this.rc(0, 1) * A0323 + this.rc(0, 3) * A0123 ),
+            dr * ( this.rc(0, 0) * A1313 - this.rc(0, 1) * A0313 + this.rc(0, 3) * A0113 ),
+            dr *-( this.rc(0, 0) * A1312 - this.rc(0, 1) * A0312 + this.rc(0, 3) * A0112 ),
+
+            dr *-( this.rc(1, 0) * A1223 - this.rc(1, 1) * A0223 + this.rc(1, 2) * A0123 ),
+            dr * ( this.rc(0, 0) * A1223 - this.rc(0, 1) * A0223 + this.rc(0, 2) * A0123 ),
+            dr *-( this.rc(0, 0) * A1213 - this.rc(0, 1) * A0213 + this.rc(0, 2) * A0113 ),
+            dr * ( this.rc(0, 0) * A1212 - this.rc(0, 1) * A0212 + this.rc(0, 2) * A0112 ),
+        ] );
+    }
+
+    clone() {
+        let c = new Array(16);
+        for( let i = 0; i < 16; i++ ) { c[i] = this.data[i]; }
+        return new Mat4( c );
+    }
+	getCoords() {
+        let x = this.data[ 3 ];
+        let y = this.data[ 7 ];
+        let z = this.data[ 11 ];
+
+        return new Vec4( x, y, z, 1.0 );
+    }
+	toString() {
+		let pieces = [ '[' ];
+		
+		for( let row = 0; row < 4; row ++ ){
+			pieces.push( '[' );
+			
+			for( let col = 0; col < 4; col ++ ){
+				let i = row * 4 + col;
+				pieces.push( this.data[i] );
+			}
+			
+			pieces.push( ']' )
+		}
+		
+		pieces.push( ']' );
+		
+		return pieces.join( ' ' );
+	}
+    get_transformed_coordinates() {
+        let x = this.data[ 3 ];
+        let y = this.data[ 7 ];
+        let z = this.data[ 11 ];
+
+        return new Vec4( x, y, z, 1.0 );
+    }
+
+    without_w() {
+        let clone = this.clone();
+        clone.data[12] = clone.data[13] = clone.data[14] = 0;
+        clone.data[15] = 1;
+        clone.data[3] = 0;
+        clone.data[7] = 0;
+        clone.data[11] = 0;
+
+        return clone;
+    }
+}
+
+
+const VERTEX_STRIDE = 48;
+
+
+class NormalMesh {
+    /** 
+     * Creates a new mesh and loads it into video memory.
+     * 
+     * @param {WebGLRenderingContext} gl  
+     * @param {number} program
+     * @param {number[]} vertices
+     * @param {number[]} indices
+    */
+    constructor( gl, program, vertices, indices, material, use_color ) {
+        this.verts = create_and_load_vertex_buffer( gl, vertices, gl.STATIC_DRAW );
+        this.indis = create_and_load_elements_buffer( gl, indices, gl.STATIC_DRAW );
+
+        this.n_verts = vertices.length / VERTEX_STRIDE * 4;
+        this.n_indis = indices.length;
+        this.program = program;
+        this.material = material;
+
+        this.use_color = use_color ?? false;
+    }
+
+    set_vertex_attributes() {
+        set_vertex_attrib_to_buffer( 
+            gl, this.program, 
+            "coordinates", 
+            this.verts, 3, 
+            gl.FLOAT, false, VERTEX_STRIDE, 0 
+        );
+
+        set_vertex_attrib_to_buffer( 
+            gl, this.program, 
+            "color", 
+            this.verts, 4, 
+            gl.FLOAT, false, VERTEX_STRIDE, 12
+        );
+
+        set_vertex_attrib_to_buffer( 
+            gl, this.program,
+            "uv",
+            this.verts, 2,
+            gl.FLOAT, false, VERTEX_STRIDE, 28
+        );
+
+        set_vertex_attrib_to_buffer(
+            gl, this.program, 
+            "normal",
+            this.verts, 3, 
+            gl.FLOAT, false, VERTEX_STRIDE, 36
+        )
+    }
+    
+
+    /**
+     * Create a box mesh with the given dimensions and colors. Creates normals.
+     * @param {WebGLRenderingContext} gl 
+     */
+
+    static box( gl, program, width, height, depth, material ) {
+        let hwidth = width / 2.0;
+        let hheight = height / 2.0;
+        let hdepth = depth / 2.0;
+        //Vertex corners, vertex color corners, uv per face, normal vertices
+        let verts = [
+            hwidth, -hheight, -hdepth,  1.0, 1.0, 1.0, 1.0,     1.0, 1.0,   0.0, 0.0, -1.0,
+            -hwidth, -hheight, -hdepth, 1.0, 1.0, 1.0, 1.0,     0.0, 1.0,   0.0, 0.0, -1.0,
+            -hwidth, hheight, -hdepth,  1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   0.0, 0.0, -1.0,
+            hwidth, hheight, -hdepth,   1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   0.0, 0.0, -1.0,
+
+            hwidth, -hheight, hdepth,   1.0, 0.0, 1.0, 1.0,     1.0, 1.0,   1.0, 0.0, 0.0,
+            hwidth, -hheight, -hdepth,  1.0, 1.0, 1.0, 1.0,     0.0, 1.0,   1.0, 0.0, 0.0,
+            hwidth, hheight, -hdepth,   1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   1.0, 0.0, 0.0,
+            hwidth, hheight, hdepth,    1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   1.0, 0.0, 0.0,
+
+            -hwidth, -hheight, hdepth,  1.0, 1.0, 1.0, 1.0,     1.0, 1.0,   0.0, 0.0, 1.0,
+            hwidth, -hheight, hdepth,   1.0, 1.0, 1.0, 1.0,     0.0, 1.0,   0.0, 0.0, 1.0,
+            hwidth, hheight, hdepth,    1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   0.0, 0.0, 1.0,
+            -hwidth, hheight, hdepth,   1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   0.0, 0.0, 1.0,
+            
+            -hwidth, -hheight, hdepth,  1.0, 1.0, 1.0, 1.0,     0.0, 1.0,   -1.0, 0.0, 0.0,
+            -hwidth, -hheight, -hdepth, 1.0, 1.0, 1.0, 1.0,     1.0, 1.0,   -1.0, 0.0, 0.0,
+            -hwidth, hheight, -hdepth,  1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   -1.0, 0.0, 0.0,
+            -hwidth, hheight, hdepth,   1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   -1.0, 0.0, 0.0,
+
+            -hwidth, hheight, -hdepth,  1.0, 0.0, 0.0, 1.0,     0.0, 1.0,   0.0, 1.0, 0.0,
+            hwidth, hheight, -hdepth,   1.0, 1.0, 1.0, 1.0,     1.0, 1.0,   0.0, 1.0, 0.0,
+            hwidth, hheight, hdepth,    1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   0.0, 1.0, 0.0,
+            -hwidth, hheight, hdepth,   1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   0.0, 1.0, 0.0,
+
+            -hwidth, -hheight, -hdepth, 1.0, 1.0, 1.0, 1.0,     0.0, 1.0,   0.0, -1.0, 0.0,
+            hwidth, -hheight, -hdepth,  1.0, 1.0, 1.0, 1.0,     1.0, 1.0,   0.0, -1.0, 0.0,
+            hwidth, -hheight, hdepth,   1.0, 1.0, 1.0, 1.0,     1.0, 0.0,   0.0, -1.0, 0.0,
+            -hwidth, -hheight, hdepth,  1.0, 1.0, 1.0, 1.0,     0.0, 0.0,   0.0, -1.0, 0.0,
+        ];
+
+        let indis = [
+            // clockwise winding
+            0, 3, 2, 2, 1, 0,
+            4, 7, 6, 6, 5, 4,
+            8, 11, 10, 10, 9, 8,
+            12, 13, 14, 14, 15, 12,
+            16, 17, 18, 18, 19, 16,
+            20, 23, 22, 22, 21, 20,
+        ];
+
+        return new NormalMesh( gl, program, verts, indis, material, false );
+    }
+
+    /**
+     * Create a flat platform in the xz plane.
+     * @param {WebGLRenderingContext} gl 
+     */
+    static platform( gl, program, width, depth, uv_min, uv_max, material ) {
+        let hwidth = width / 2;
+        let hdepth = depth / 2;
+        
+        let verts = [
+            -hwidth, 0, -hdepth,  1.0, 1.0, 1.0, 1.0,     uv_min, uv_max,   0.0, 1.0, 0.0,
+            hwidth, 0, -hdepth,   1.0, 1.0, 1.0, 1.0,     uv_max, uv_max,   0.0, 1.0, 0.0,
+            hwidth, 0, hdepth,    1.0, 1.0, 1.0, 1.0,     uv_max, uv_min,   0.0, 1.0, 0.0,
+            -hwidth, 0, hdepth,   1.0, 1.0, 1.0, 1.0,     uv_min, uv_min,   0.0, 1.0, 0.0,
+        ];
+
+        let indis = [ 0, 1, 2, 2, 3, 0, ];
+
+        return new NormalMesh( gl, program, verts, indis, material, false );
+    }
+
+    /**
+     * Load a mesh from a heightmap.
+     * @param {WebGLRenderingContext} gl 
+     * @param {WebGLProgram} program
+     * @param {number[][]} map
+     * @param {number} min 
+     * @param {number} max
+     */
+    static from_heightmap( gl, program, map, min, max, material ) {
+        let rows = map.length;
+        let cols = map[0].length;
+        const MIN_HEIGHT_COLOR = 0.2;
+
+        let off_x = cols / 2;
+        let off_z = rows / 2;
+
+        let verts = [];
+        let indis = [];
+
+        function color( height ) {
+            let normed_height = height / ( max - min );
+            return MIN_HEIGHT_COLOR + normed_height * ( 1 - MIN_HEIGHT_COLOR );
+        }
+
+        function push_vert( verts, vert, u, v, normal ) {
+            verts.push( vert.x, vert.y, vert.z );
+            let vert_bright = color( vert.y );
+            verts.push( vert_bright, vert_bright, vert_bright, 1.0 );
+            verts.push( u, v );
+            verts.push( normal.x, normal.y, normal.z );
+        }
+
+        for( let row = 1; row < rows; row++ ) {
+            for( let col = 1; col < cols; col++ ) {
+                let indi_start = indis.length;
+
+                let pos_tl = map[row - 1][col - 1];
+                let pos_tr = map[row - 1][col];
+                let pos_bl = map[row][col - 1];
+                let pos_br = map[row][col];
+
+                let v_tl = new Vec4( -1, pos_tl, -1 );
+                let v_tr = new Vec4( 0, pos_tr, -1 );
+                let v_bl = new Vec4( -1, pos_bl, 0 );
+                let v_br = new Vec4( 0, pos_br, 0 );
+
+                let normal_t1 = Vec4.normal_of_triangle( v_tl, v_tr, v_bl );
+                let normal_t2 = Vec4.normal_of_triangle( v_br, v_bl, v_tr );
+
+                // debug
+                // normal_t1 = new Vec4( 0, 1, 0 );
+                // normal_t2 = new Vec4( 0, 1, 0 );
+
+                v_tl.x += col - off_x;
+                v_tl.z += row - off_z;
+                v_tr.x += col - off_x;
+                v_tr.z += row - off_z;
+                v_bl.x += col - off_x;
+                v_bl.z += row - off_z;
+                v_br.x += col - off_x;
+                v_br.z += row - off_z;
+
+                push_vert( verts, v_tl, 0, 1, normal_t1 );
+                push_vert( verts, v_tr, 1, 1, normal_t1 );
+                push_vert( verts, v_bl, 0, 0, normal_t1 );
+
+                push_vert( verts, v_br, 1, 0, normal_t2 );
+                push_vert( verts, v_bl, 0, 0, normal_t2 );
+                push_vert( verts, v_tr, 1, 1, normal_t2 );
+
+                indis.push( 
+                    indi_start,
+                    indi_start + 1,
+                    indi_start + 2,
+                    indi_start + 3,
+                    indi_start + 4,
+                    indi_start + 5
+                );
+            }
+        }
+
+        return new NormalMesh( gl, program, verts, indis, material, true );
+    }
+
+    /**
+     * Render the mesh. Does NOT preserve array/index buffer, program, or texture bindings! 
+     * 
+     * @param {WebGLRenderingContext} gl 
+     */
+    render( gl ) {
+        // gl.enable( gl.CULL_FACE );
+        
+        gl.useProgram( this.program );
+        this.set_vertex_attributes();
+        gl.bindBuffer( gl.ARRAY_BUFFER, this.verts );
+        gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, this.indis );
+        bind_texture_samplers( gl, this.program, "tex_0" ,0);
+
+        gl.activeTexture( gl.TEXTURE0 );
+        this.material.bind( gl, this.program );
+
+        set_uniform_int( gl, this.program, 'use_color', this.use_color );
+
+        gl.drawElements( gl.TRIANGLES, this.n_indis, gl.UNSIGNED_SHORT, 0 );
+    }
+
+    /**
+     * Create a UV sphere.
+     * @param {*} gl 
+     * @param {*} program 
+     * @param {*} radius 
+     * @param {*} subdivs the number of subdivisions, both vertically and radially
+     * @param {*} material 
+     * @returns 
+     */
+    static uv_sphere( gl, program, radius, subdivs, material ) {
+        if( subdivs < 3 ) {
+            throw new Error( "subdivs must be at least 3. value: " + subdivs );
+        }
+
+        let verts = []
+        let indis = []
+
+        for( let layer = 0; layer <= subdivs; layer++ ) {
+            // let y = layer / subdivs - 0.5;
+            let y_turns = layer /  subdivs / 2;
+            let y = Math.cos( 2 * Math.PI * y_turns ) / 2;
+            let radius_scale_for_layer = Math.sin( 2 * Math.PI * y_turns );
+
+            for( let subdiv = 0; subdiv <= subdivs; subdiv++ ) {
+                let turns = subdiv / subdivs; 
+                let rads = 2 * Math.PI * turns;
+    
+                let x = Math.cos( rads ) / 2 * radius_scale_for_layer;
+                let z = Math.sin( rads ) / 2 * radius_scale_for_layer;
+
+                let point_norm = new Vec4( x, y, z, 0.0 ).norm();
+                let scaled_point = point_norm.scaled( radius );
+                
+                // coordinates
+                verts.push( scaled_point.x, scaled_point.y, scaled_point.z );
+
+                // console.log( layer, subdiv, scaled_point.x, scaled_point.y, scaled_point.z );
+                
+                // color (we're making it white for simplicity)
+                verts.push( 1, 1, 1, 1 );
+
+                // uvs
+                verts.push( subdiv / subdivs, layer / subdivs );
+                
+                // normal vector. make sure you understand why the normalized coordinate is 
+                // equivalent to the normal vector for the sphere.
+                verts.push( point_norm.x, point_norm.y, point_norm.z );
+            }
+        }
+
+        function get_indi_no_from_layer_and_subdiv_no( layer, subdiv ) {
+            let layer_start = layer * ( subdivs + 1 );
+            return layer_start + subdiv % ( subdivs + 1 );
+        }
+
+        for( let layer = 1; layer <= subdivs; layer++ ) {
+            for( let subdiv = 0; subdiv < subdivs; subdiv++ ) {
+                let i0 = get_indi_no_from_layer_and_subdiv_no( layer - 1, subdiv );
+                let i1 = get_indi_no_from_layer_and_subdiv_no( layer - 1, subdiv + 1 );
+                let i2 = get_indi_no_from_layer_and_subdiv_no( layer, subdiv );
+                let i3 = get_indi_no_from_layer_and_subdiv_no( layer, subdiv + 1 );
+
+                indis.push( i0, i2, i3, i3, i1, i0 );
+            }
+        }
+
+        return new NormalMesh( gl, program, verts, indis, material, false );
+    }
+
+    /**
+     * Parse the given text as the body of an obj file.
+     * @param {WebGLRenderingContext} gl
+     * @param {WebGLProgram} program
+     * @param {string} text
+     */
+    static from_obj_text( gl, program, text, material, use_color ) {
+        // create verts and indis from the text 
+        let verts=[], indis=[], vert_str=[], indi_str=[];
+        //Split lines after each newline
+		let lines=(text.split(/\r?\n/));
+        //Get only vertecies or only indices
+        let vert_lines = lines.filter(line => {return line.startsWith("v");});
+        let indi_lines = lines.filter(line => {return line.startsWith("f");});
+        //Arrays of 3 value length arrays
+        let vert_trim=vert_lines.map(line => {return (line.replace(/v? */,"")).split(" ");});
+        let indi_trim=indi_lines.map(line => {return (line.replace(/f? */,"")).split(" ");});
+        //Concatenate the 3 length arrays together into one big array
+        //Manually add color, normals, and uv
+        for(let index in vert_trim){
+            //Get normal vector
+            let verts= new Vec3(vert_trim[index][0],vert_trim[index][1],vert_trim[index][2])
+            let verts_normal = verts.norm()
+            vert_str=vert_str.concat(vert_trim[index].concat([0.0,1.0,1.0,1.0, verts_normal.x, verts_normal.y, verts_normal.z,0,1]));
+        }
+
+        for(let index in indi_trim)     indi_str=indi_str.concat(indi_trim[index]);
+        verts=vert_str.map(item => {return +(item);});
+        //Indices start at 1 and not 0, we adjust for vertices
+        indis=indi_str.map(item => {return (+(item) -1);});
+        return new NormalMesh( gl, program, verts, indis, material, use_color );
+
+    }
+
+    /**
+     * Asynchronously load the obj file as a mesh.
+     * @param {WebGLRenderingContext} gl
+     * @param {string} file_name 
+     * @param {WebGLProgram} program
+     * @param {function} f the function to call and give mesh to when finished.
+     */
+    static from_obj_file( gl, file_name, program, f, material, use_color) {
+        let request = new XMLHttpRequest();
+        
+        // the function that will be called when the file is being loaded
+        request.onreadystatechange = function() {
+            if( request.readyState != 4 ) { return; }
+            if( request.status != 200 ) { 
+                throw new Error( 'HTTP error when opening .obj file: ', request.statusText ); 
+            }
+
+            // now we know the file exists and is ready
+			// load the file 
+            let loaded_mesh = NormalMesh.from_obj_text( gl, program, request.responseText, material, use_color );
+
+            console.log( 'loaded ', file_name );
+            //Tell the main script to save the mesh we made Callback to this callback.
+            f( loaded_mesh );
+        };
+
+        
+        request.open( 'GET', file_name ); // initialize request. 
+        request.send();                   // execute request
+    }
+}
+class NodeLight{
+    constructor(r,g,b,is_the_sun){
+        this.r=r;
+        this.g=g;
+        this.b=b;
+        this.is_the_sun=is_the_sun;
+    }
+}
+
+class Node {
+    constructor( x, y, z, yaw, pitch, roll, s_x, s_y, s_z, data ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+
+        this.yaw = yaw;
+        this.pitch = pitch;
+        this.roll = roll;
+
+        this.scale_x = s_x ?? 1;
+        this.scale_y = s_y ?? 1;
+        this.scale_z = s_z ?? 1;
+
+        this.data = data;
+
+        this.children = [];
+    }
+
+    add_yaw( amount ) { 
+        this.yaw += amount; 
+
+        if( this.yaw < 0 ) {
+            this.yaw = 1 + this.yaw;
+        }
+
+        if( this.yaw > 1 ) {
+            this.yaw = this.yaw % 1;
+        }
+    }
+    
+    add_pitch( amount ) { 
+        this.pitch += amount; 
+        if( this.pitch > this.PITCH_LIMIT ) {
+            this.pitch = this.PITCH_LIMIT;
+        }
+        else if( this.pitch < - this.PITCH_LIMIT ) {
+            this.pitch = -this.PITCH_LIMIT;
+        }
+    }
+
+    change_scale( x, y, z ) {
+        this.scale_x = x;
+        this.scale_y = y;
+        this.scale_z = z;
+    }
+
+    add_roll( amount ) { 
+        this.roll += amount; 
+
+        if( this.roll < -.5 ) { this.roll = -.5; }
+        if( this.roll > 5 ) { this.roll = .5; }
+    }
+
+    move_in_direction( strafe, up, forward ) {
+        let matrix = Node.get_dir_matrix( this.roll, this.pitch, this.yaw );
+        let txed = matrix.transform_vec( new Vec4( strafe, up, forward, 0 ) );
+
+        this.translate_vec( txed );
+    }
+
+    translate( x, y, z ) {
+        this.x += x;
+        this.y += y;
+        this.z += z;
+    }
+
+    translate_vec( v ) {
+        this.translate( v.x, v.y, v.z );
+    }
+
+    warp( x, y, z ) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    warp_vec( v ) {
+        this.warp( v.x, v.y, v.z );
+    }
+
+    static get_dir_matrix( roll, pitch, yaw ) {
+        let matrix = new Mat4();
+
+        
+        matrix = matrix.mul( Mat4.rotation_xz( yaw ) );
+        matrix = matrix.mul( Mat4.rotation_yz( pitch ) );
+        matrix = matrix.mul( Mat4.rotation_xy( roll ) );
+        
+        return matrix;
+    }
+
+    get_matrix() {
+        let matrix = new Mat4();
+
+        // note: I deliberately changed the order here by applying scale last, so that I could 
+        // do the "breathing" effect. 
+        // matrix = matrix.mul( Mat4.scale( this.scale_x, this.scale_y, this.scale_z ) );
+
+        matrix = matrix.mul( Mat4.translation( this.x, this.y, this.z ) );
+        
+        matrix = matrix.mul( Mat4.rotation_xz( this.yaw ) );
+        matrix = matrix.mul( Mat4.rotation_yz( this.pitch ) );
+        matrix = matrix.mul( Mat4.rotation_xy( this.roll ) );
+        matrix = matrix.mul( Mat4.scale( this.scale_x, this.scale_y, this.scale_z ) );
+
+        return matrix;
+    }
+
+    get_view_matrix() {
+        return this.get_matrix().inverse();
+    }
+
+    create_child_node( x, y, z, yaw, pitch, roll, s_x, s_y, s_z, data ) {
+        let child = new Node( x, y, z, yaw, pitch, roll, s_x, s_y, s_z, data );
+        this.children.push( child );
+
+        return child;
+    }
+
+    get_transformed_coordinates() {
+        let matrix = this.get_matrix();
+
+        return matrix.get_transformed_coordinates();
+    }
+
+    generate_render_batch( parent_matrix, jobs, lights ) {
+        let matrix = parent_matrix.mul( this.get_matrix() );
+
+        if( this.data instanceof NodeLight ) {
+            if( !this.data.is_the_sun ) {
+                let coords = matrix.get_transformed_coordinates();
+                // pass position coordinates and color rgb values to a renderlight job
+                lights.push( new RenderLight( coords, this.data ) );
+            }
+        }
+        else if( this.data instanceof NormalMesh ) {
+            jobs.push( new RenderMesh( matrix, this.data ) )
+        }
+        else if( this.data == null ) {
+            // do nothing
+        }
+        else {
+            console.log( this );
+            throw new Error( 
+                'unrecognized node data: ' + 
+                this.data.constructor.name + ' (' + this.data + ').' 
+            );
+        }
+
+        for( let child of this.children ) {
+            child.generate_render_batch( matrix, jobs, lights );
+        }
+    }
+}
+
+class RenderLight {
+    constructor( loc, color ) {
+        this.loc = loc;
+        this.color = color;
+    }
+}
+
+class RenderMesh {
+    constructor( matrix, mesh ) {
+        this.matrix = matrix;
+        this.mesh = mesh;
+    }
+}
+
+class Scene {
+
+    constructor() {
+        this.root = new Node( 0, 0, 0, 0, 0, 0, 1, 1, 1 );
+        this.camera_node = this.root;
+        //Add sun light node at (0,1,0) with 0 rotations, 1 scale in xyz, and 1,1,1 color
+        this.sun_node = 
+            this.root.create_child_node( 
+                0, 1, 0, 0, 0, 0, 1, 1, 1, new NodeLight( 1, 1, 1, true ) );
+    }
+
+    set_sun_color( r, g, b ) {
+        let l = this.sun_node.data;
+        l.r = r;
+        l.g = g;
+        l.b = b;
+    }
+
+    set_sun_direction( x, y, z ) {
+        let l = this.sun_node;
+        l.x = x;
+        l.y = y;
+        l.z = z;
+    }
+
+    /**
+     * Attach the sun's direction and color to the given program.
+     * @param {WebGLRenderingContext} gl 
+     * @param {WebGLProgram} program 
+     */
+    bind_sun( gl, program ) {
+        let sun = this.sun_node;
+        let loc = sun.get_transformed_coordinates().norm();
+        set_uniform_vec3( gl, program, 'sun_dir', loc.x, loc.y, loc.z );
+        set_uniform_vec3( gl, program, 'sun_color', sun.data.r, sun.data.g, sun.data.b );
+    }
+
+    generate_render_batch( jobs, lights ) {
+        this.root.generate_render_batch( Mat4.identity(), jobs, lights );
+    }
+
+    get_camera_view() {
+        return this.camera_node.get_view_matrix();
+    }
+
+    set_camera_node( node ) {
+        this.camera_node = node;
+    }
+
+    create_node( x, y, z, yaw, pitch, roll, s_x, s_y, s_z, data ) {
+        let node = this.root.create_child_node( x, y, z, yaw, pitch, roll, s_x, s_y, s_z, data );
+
+        return node;
+    }
+
+}
