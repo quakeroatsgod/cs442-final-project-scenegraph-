@@ -1,4 +1,4 @@
-//Griffen Agnello   Final Project   Scene Graphs    CS442
+//Griffen Agnello, Cyrus Santiago   Final Project   Scene Graphs    CS442
 let canvas = document.getElementById( 'the-canvas' );
 /** @type {WebGLRenderingContext} */
 let gl = canvas.getContext( 'webgl2' );
@@ -193,22 +193,14 @@ let car_mat = new LitMaterial( gl, 'res/textures/car.jpg', gl.LINEAR, 0.125, 1, 
 let wheel_mat = new LitMaterial( gl, 'res/textures/wheel.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
 let cow_mat = new LitMaterial( gl, 'res/textures/vaporwave.png', gl.LINEAR, 0.125, 1, 2, 8 );
 let road_mat = new LitMaterial( gl, 'res/textures/road.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
-// let height_map=[    [0,0,0,0,0,0],
-//                     [0,1,1,1,1,0],
-//                     [0,1,1,1,1,0],
-//                     [0,1,1,1,1,0],
-//                     [0,1,1,1,1,0],
-//                     [0,-1,-1,-1,-1,0],
-//                     [0,0,0,0,0,0],
-//                     [0,0,0,0,0,0],
-//                     [0,0,0,0,0,0]];
-// let mesh_map = NormalMesh.from_heightmap(gl,lit_program,height_map,-1,3,scale_mat);
+let map_mat = new LitMaterial(gl, 'res/textures/pink_grid.webp', gl.LINEAR, 0.5, 1, 3, 4);
 //Asynchronously load the cow obj
 var cow_mesh=null;
 NormalMesh.from_obj_file(gl,'res/obj/cow.obj', lit_program, getMesh,cow_mat,false)
 let mesh_box_car = NormalMesh.box(gl, lit_program, 1,1,1,car_mat);
 let mesh_box_floating = NormalMesh.box(gl, lit_program, 1,1,1,floating_box_mat);
 let wheel_sphere = NormalMesh.uv_sphere( gl, lit_program, 0.25, 200, wheel_mat ); 
+let wave_sphere = NormalMesh.uv_sphere( gl, lit_program, 0.25, 100, map_mat);
 let mesh_road = NormalMesh.platform(gl,lit_program,1,4,0,1,road_mat);
 
 //add stuff to scene
@@ -216,8 +208,9 @@ var root_control_node = scene.create_node(0,0,0, 0,0,0, 1,1,1, null);
 var road_control_node = root_control_node.create_child_node(0,-1,0, 0,0,0, 3,1,3, null);
 var car_control_node = root_control_node.create_child_node(0,0,0, -0.32,0,0, 2,1,2, null);
 var wheel_control_node = car_control_node.create_child_node(0,0,0, 0,0,0, 1,1,1, null);
+var main_sphere_control_node = car_control_node.create_child_node(0,0,0, 0,0,0, 1,1,1, null);
 var floating_box_control_node=car_control_node.create_child_node(0,0,0, 0,0,0, 0.5,1,0.5, null);
-
+var small_sphere_control_node=main_sphere_control_node.create_child_node(0,0,-4, 0,0,0, 1,1,1, null);
 var floating_box=floating_box_control_node.create_child_node(0,-2,0, 0,0,0, 1,1,1, mesh_box_floating);
 //This will be set as a node later after loading obj
 var cow_node = null;
@@ -235,6 +228,11 @@ var road1=road_control_node.create_child_node(0,0,0, -0.32,0,0, 1,1,1, mesh_road
 var road2=road1.create_child_node(0,0,4, 0,0,0, 1,1,1, mesh_road);
 var road3=road2.create_child_node(0,0,4, 0,0,0, 1,1,1, mesh_road);
 
+//Spheres
+var bigSphere=main_sphere_control_node.create_child_node(0,0,-4, 0,0,0, 4,4,4, wave_sphere);
+var smallSphere=small_sphere_control_node.create_child_node(0,1.5,-1, 0,0.25,0, 0.5,0.5,0.5, wave_sphere);
+var smallSphere2=small_sphere_control_node.create_child_node(0,-1,-1.2, 0,0.25,0, 0.5,0.5,0.5, wheel_sphere);
+var smallRoad=small_sphere_control_node.create_child_node(-2,0,-1.4, 0,0.25,0, 0.5,0.5,0.5, mesh_road);
 
 function render( now ) {
     last_update = now;
@@ -357,6 +355,10 @@ function update() {
     floating_box_control_node.add_pitch(0.002)
     floating_box_control_node.add_roll(0.002)
     floating_box_control_node.add_yaw(0.002)
+    bigSphere.add_pitch(-0.005)
+    small_sphere_control_node.add_roll(0.02)
+    smallSphere.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
+    smallSphere2.add_yaw(0.02)
     floating_box.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
     cow_node.add_yaw(0.01)
     for(wheel of wheels){
