@@ -1,4 +1,4 @@
-//Griffen Agnello   Final Project   Scene Graphs    CS442
+//Griffen Agnello, Cyrus Santiago   Final Project   Scene Graphs    CS442
 let canvas = document.getElementById( 'the-canvas' );
 /** @type {WebGLRenderingContext} */
 let gl = canvas.getContext( 'webgl2' );
