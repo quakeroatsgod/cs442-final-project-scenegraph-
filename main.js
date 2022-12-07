@@ -166,7 +166,7 @@ const FLY_SPEED_PER_FRAME = FLY_SPEED / DESIRED_TICK_RATE;
 var SCALE_CHANGE_AMOUNT=1;
 var SCALE_CHANGE_INCREMENT=0.025;
 //Timer for moving the road meshes
-const TIMER_START_TIME=6000;
+const TIMER_START_TIME=4825;
 var time_since_last_move=TIMER_START_TIME;
 let keys = Keys.start_listening();
 
@@ -188,12 +188,12 @@ scene.set_sun_direction(-2,2,-1);
 let light_1 = new NodeLight(0,1,0,false);
 let light_2 = new NodeLight(0,0,1, false);
 //Scene Meshes
-let floating_box_mat = new LitMaterial( gl, 'res/textures/wood_boards.png', gl.LINEAR, 0.125, 1, 2, 4 );
-let car_mat = new LitMaterial( gl, 'res/textures/car.jpg', gl.LINEAR, 0.125, 1, 2, 4 );
-let wheel_mat = new LitMaterial( gl, 'res/textures/wheel.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
-let cow_mat = new LitMaterial( gl, 'res/textures/vaporwave.png', gl.LINEAR, 0.125, 1, 2, 8 );
-let road_mat = new LitMaterial( gl, 'res/textures/road.jpg', gl.LINEAR, 0.5, 1, 3, 4 );
-let map_mat = new LitMaterial(gl, 'res/textures/pink_grid.webp', gl.LINEAR, 0.5, 1, 3, 4);
+let floating_box_mat = new LitMaterial( gl, 'res/textures/wood_boards.png', gl.LINEAR, 0.35, 1, 2, 4 );
+let car_mat = new LitMaterial( gl, 'res/textures/car.jpg', gl.LINEAR, 0.35, 1, 2, 4 );
+let wheel_mat = new LitMaterial( gl, 'res/textures/wheel.jpg', gl.LINEAR, 0.65, 1, 3, 4 );
+let cow_mat = new LitMaterial( gl, 'res/textures/vaporwave.png', gl.LINEAR, 0.35, 1, 2, 8 );
+let road_mat = new LitMaterial( gl, 'res/textures/road.jpg', gl.LINEAR, 0.65, 1, 3, 4 );
+let map_mat = new LitMaterial(gl, 'res/textures/pink_grid.webp', gl.LINEAR, 0.65, 1, 3, 16);
 //Asynchronously load the cow obj
 var cow_mesh=null;
 NormalMesh.from_obj_file(gl,'res/obj/cow.obj', lit_program, getMesh,cow_mat,false)
@@ -311,6 +311,11 @@ const KEYMAP = {
         cam.y=car_control_node.y+1.25;
         cam.z=car_control_node.z;
     },
+    'KeyH': function() {
+        road1.translate(-road1.x,0,-road1.z)
+        car_control_node.translate(-car_control_node.x,0,-car_control_node.z)
+        time_since_last_move=TIMER_START_TIME;
+    },
     'KeyW': function() { cam.move_in_direction( 0, 0, FLY_SPEED_PER_FRAME ); },
     'KeyS': function() { cam.move_in_direction( 0, 0, -FLY_SPEED_PER_FRAME ); },
     'KeyA': function() { cam.move_in_direction( -FLY_SPEED_PER_FRAME, 0, 0 ); },
@@ -334,57 +339,59 @@ function getMesh(mesh_from_file){
 }
 
 function update() {
-    let keys_down = keys.keys_down_list();
-    for( const key of keys_down ) {
-        let bound_function = KEYMAP[ key ];
+    if(cow_mesh){
+        let keys_down = keys.keys_down_list();
+        for( const key of keys_down ) {
+            let bound_function = KEYMAP[ key ];
 
-        if( bound_function ) {
-            bound_function();
+            if( bound_function ) {
+                bound_function();
+            }
+        }
+        cam.zoom+=keys.getZoom();
+        if(cam.zoom >= 0.4)                      cam.zoom=0.4;
+        else if(cam.zoom <= 0.0625)                cam.zoom=0.0625;
+        cam.yaw+=keys.getX() * ROTATION_SPEED_PER_FRAME*0.15;
+        cam.pitch+=keys.getY() * ROTATION_SPEED_PER_FRAME*0.15;
+
+        keys.mouse_x=0;
+        keys.mouse_y=0;
+        keys.zoom=0;
+        car_control_node.move_in_direction(0,0,8*ROTATION_SPEED_PER_FRAME);
+        floating_box_control_node.add_pitch(0.002)
+        floating_box_control_node.add_roll(0.002)
+        floating_box_control_node.add_yaw(0.002)
+        bigSphere.add_pitch(-0.005)
+        small_sphere_control_node.add_roll(0.02)
+        smallSphere.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
+        smallSphere2.add_yaw(0.02)
+        floating_box.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
+        cow_node.add_yaw(0.01)
+        for(wheel of wheels){
+            wheel.add_pitch(-0.02)
+        }
+        light_nodes[0].add_roll(0.02)
+
+        //update amount to scale by
+        if(SCALE_CHANGE_AMOUNT > 1.5 || SCALE_CHANGE_AMOUNT < 0.1){
+            //Flip sign so decrease/increase in scale
+            SCALE_CHANGE_INCREMENT*=(-1);
+        }
+        //Increment by 0.1 each update
+        SCALE_CHANGE_AMOUNT+=SCALE_CHANGE_INCREMENT;
+
+        //Decrement timer to move roads.
+        if(time_since_last_move < 0 ){
+            road1.move_in_direction(0,0,4)
+            time_since_last_move=TIMER_START_TIME;
+        }
+        else{
+            //Subtract passed time since last frame in milliseconds
+            let delta=((performance.now() - last_update)); 
+            last_update=performance.now()
+            time_since_last_move-=delta;
         }
     }
-    cam.zoom+=keys.getZoom();
-    if(cam.zoom >= 0.4)                      cam.zoom=0.4;
-    else if(cam.zoom <= 0.0625)                cam.zoom=0.0625;
-    cam.yaw+=keys.getX() * ROTATION_SPEED_PER_FRAME*0.15;
-    cam.pitch+=keys.getY() * ROTATION_SPEED_PER_FRAME*0.15;
-
-    keys.mouse_x=0;
-    keys.mouse_y=0;
-    keys.zoom=0;
-    car_control_node.move_in_direction(0,0,8*ROTATION_SPEED_PER_FRAME);
-    floating_box_control_node.add_pitch(0.002)
-    floating_box_control_node.add_roll(0.002)
-    floating_box_control_node.add_yaw(0.002)
-    bigSphere.add_pitch(-0.005)
-    small_sphere_control_node.add_roll(0.02)
-    smallSphere.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
-    smallSphere2.add_yaw(0.02)
-    floating_box.change_scale(SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT,SCALE_CHANGE_AMOUNT)
-    cow_node.add_yaw(0.01)
-    for(wheel of wheels){
-        wheel.add_pitch(-0.02)
-    }
-    light_nodes[0].add_roll(0.02)
-
-    //update amount to scale by
-    if(SCALE_CHANGE_AMOUNT > 1.5 || SCALE_CHANGE_AMOUNT < 0.1){
-        //Flip sign so decrease/increase in scale
-        SCALE_CHANGE_INCREMENT*=(-1);
-    }
-    //Increment by 0.1 each update
-    SCALE_CHANGE_AMOUNT+=SCALE_CHANGE_INCREMENT;
-
-    //Decrement timer to move roads.
-    if(time_since_last_move < 0 ){
-        road1.move_in_direction(0,0,4)
-        time_since_last_move=TIMER_START_TIME;
-    }
-    else{
-        //Subtract passed time since last frame in milliseconds
-        let delta=((performance.now() - last_update)); 
-        time_since_last_move-=delta;
-    }
-    
     return;
 }
 
